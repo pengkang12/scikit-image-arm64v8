@@ -1,0 +1,126 @@
+# vim ft=yaml
+
+# After changing this file, check it on:
+#   http://yaml-online-parser.appspot.com/
+
+# See tools/travis/notes.txt for some guidelines
+
+# If this is ever changed to xenial (Ubuntu 16.04), make sure to enable the
+# xvfb service
+dist: trusty
+language: python
+sudo: false
+cache:
+  # See http://docs.travis-ci.com/user/caching/#pip-cache
+  directories:
+    - $HOME/.cache/pip
+    - $HOME/.cache/sphinx
+    - $HOME/.ccache
+addons:
+  apt:
+    packages:
+    - ccache
+    - texlive
+    - texlive-latex-extra
+    - dvipng
+    - python-qt4
+    # this became necessary to use matplotlib and qt5.12
+    # https://github.com/matplotlib/matplotlib/pull/13412
+    - qtbase5-dev
+
+env:
+  global:
+    - GH_REF: github.com/scikit-image/docs.git
+    - secure: "Z8uxAGrFb6yNw/savI7YvA5/BfkVKVGD3HUkDSXamotJAvUKMjIlWnzLc7d9S7PY99FRENgRYaNw4fzZqwJ91hDITcl1/wk6ux1j778O8kUQZayzdqcJG8KpfBsy1vJ4fl4uDGlSmUP413rR3R3dvvgJzIpCLy2qiQR/xujrGvs="
+
+notifications:
+  webhooks:
+    urls:
+      - https://webhooks.gitter.im/e/1fea29525e8b929dd7c7
+    on_success: change  # options: [always|never|change] default: always
+    on_failure: always  # options: [always|never|change] default: always
+    on_start: false     # default: false
+
+matrix:
+  include:
+    - os: linux
+      python: 2.7
+      env: WITH_PYAMG=1 QT=PyQt4
+    - os: linux
+      python: 2.7
+      env: WITH_PYAMG=1 QT=PyQt4 PIP_FLAGS="--pre"
+    - os: linux
+      python: 2.7
+      env: MINIMUM_REQUIREMENTS=1
+    - os: linux
+      python: 3.6
+      env: QT=PyQt5 WITH_PYAMG=1 OPTIONAL_DEPS=1 BUILD_DOCS=1 DEPLOY_DOCS=1
+    - os: linux
+      python: 3.7
+      dist: xenial # Required for Python 3.7
+      sudo: true   # travis-ci/travis-ci#9069
+      env: QT=PyQt5 WITH_PYAMG=1 OPTIONAL_DEPS=1 BUILD_DOCS=1
+      services:
+        - xvfb
+    - os: linux
+      python: 3.6
+      env: QT=PyQt5 WITH_PYAMG=1 OPTIONAL_DEPS=1 PIP_FLAGS="--pre"
+    # For smooth deployment, the osx_image here should match
+    # what we set in the wheel generation travis images.
+    # If not set, it will use the default version from Travis
+    # https://docs.travis-ci.com/user/reference/osx/#xcode-version
+    - os: linux
+      python: 3.7
+      dist: xenial # Required for Python 3.7
+      sudo: true   # travis-ci/travis-ci#9069
+      services:
+        - xvfb
+    - os: osx
+      osx_image: xcode9.4
+      language: objective-c
+      env: TRAVIS_PYTHON_VERSION=3.5
+    - os: osx
+      osx_image: xcode9.4
+      language: objective-c
+      env: TRAVIS_PYTHON_VERSION=3.7
+
+before_install:
+    - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then
+        source tools/travis/osx_install.sh;
+      else
+        virtualenv -p python ~/venv;
+        source ~/venv/bin/activate;
+      fi
+    - ccache -s
+    - export PATH=/usr/lib/ccache:${PATH}
+    - source tools/travis/before_install.sh
+    - which python; python --version
+    - tools/build_versions.py
+    - tools/check_sdist.py
+
+install:
+    - python setup.py develop
+    # Install testing requirements
+    - pip install --retries 3 $PIP_FLAGS -r requirements/test.txt
+    # Matplotlib settings - do not show figures during doc examples
+    - export MPL_DIR=`python -c 'import matplotlib; print(matplotlib.get_configdir())'`
+    - mkdir -p ${MPL_DIR}
+    - touch ${MPL_DIR}/matplotlibrc
+    # Install most of the optional packages
+    - |
+      if [[ "${OPTIONAL_DEPS}" == "1" ]]; then
+        pip install --retries 3 -r ./requirements/optional.txt $WHEELHOUSE
+      fi
+    - |
+      if [[ "${WITH_PYAMG}" == "1" ]]; then
+        pip install --retries 3 -q pyamg
+      fi
+    - source tools/travis/install_qt.sh
+
+script: tools/travis/script.sh
+
+after_success:
+    - codecov
+    # Prepare.release
+    - doc/release/contribs.py HEAD~10
+    - bash tools/travis/deploy_docs.sh
